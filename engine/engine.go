@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ import (
 )
 
 const (
-	MaxCommDistance = 2500 // km
+	MaxCommDistance = 3000 // km
 )
 
 type Engine struct {
@@ -29,7 +30,7 @@ func New() *Engine {
 
 func (eng *Engine) reset() {
 	for _, n := range eng.Nodes {
-		n.Neighbors = make(map[int]*node.Node)
+		n.Reset()
 	}
 }
 
@@ -69,19 +70,23 @@ func (eng *Engine) readSnapshot(filepath string) error {
 			return err
 		}
 		pos := []float64{X, Y, Z}
+		// newNode := node.New(satId, pos)
+
 		var newNode *node.Node
 		if _, ok := eng.Nodes[satId]; ok {
 			newNode = eng.Nodes[satId]
 			newNode.Update(pos)
 		} else {
 			newNode = node.New(satId, pos)
-			satId++
 		}
+		satId++
 		for _, existingNode := range eng.Nodes {
-			dist := node.GetEuclidianDistance(existingNode.Position, newNode.Position)
-			if dist < MaxCommDistance {
-				existingNode.AddPeer(newNode)
-				newNode.AddPeer(existingNode)
+			if existingNode.ID < newNode.ID {
+				dist := node.GetEuclidianDistance(existingNode.Position, newNode.Position)
+				if dist < MaxCommDistance {
+					existingNode.AddPeer(newNode)
+					newNode.AddPeer(existingNode)
+				}
 			}
 		}
 		eng.Nodes[newNode.ID] = newNode
@@ -98,7 +103,10 @@ func (eng *Engine) Start(filepath string) error {
 
 	log.Printf("Reading folder: %s\n", filepath)
 
-	for _, f := range dir {
+	for idx, f := range dir {
+		if idx == 10 {
+			break
+		}
 		fileName := path.Join(filepath, f.Name())
 		fmt.Println("Running", fileName)
 		if err := eng.readSnapshot(fileName); err != nil {
@@ -141,10 +149,18 @@ func (eng *Engine) logResults(filename string) error {
 		}
 	}
 	fmt.Fprintf(f, "\n\n")
+	clusters := make(map[int][]int, 0)
 
 	for _, n := range eng.Nodes {
 		fmt.Fprintf(f, "%d->%d\n", n.ID, n.State.ClusterId)
+		clusters[n.State.ClusterId] = append(clusters[n.State.ClusterId], n.ID)
 	}
 
+	for clusterId, cluster := range clusters {
+		fmt.Println(clusterId, cluster)
+		if !slices.Contains(cluster, clusterId-1) || !slices.Contains(cluster, clusterId+1) {
+			fmt.Printf("%d doesnt contain next and prev\n", clusterId)
+		}
+	}
 	return nil
 }

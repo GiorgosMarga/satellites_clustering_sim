@@ -48,8 +48,11 @@ func (lc *LayeredClustering) OnTick(state *LocalState) []*Event {
 func handleCHPhase(state *LocalState) []*Event {
 	bestScore := math.MaxFloat32
 	bestPeer := 0
+	if state.ClusterId != state.NodeId {
+		return nil
+	}
 	for idx, peer := range state.AvailableNodes {
-		if !isPlaneCH(peer) {
+		if !isPlaneCH(peer) || isSamePlane(state.NodeId, peer) {
 			continue
 		}
 		peerPos := state.Positions[idx]
@@ -61,28 +64,35 @@ func handleCHPhase(state *LocalState) []*Event {
 		}
 	}
 
-	state.ClusterId = bestPeer
 	peerPlaneCentrality := calculatePlaneCentrality(bestPeer / 21)
 	myPlaneCentrality := calculatePlaneCentrality(state.NodeId / 21)
 
-	if myPlaneCentrality < peerPlaneCentrality {
+	if myPlaneCentrality < peerPlaneCentrality || (myPlaneCentrality == peerPlaneCentrality && state.NodeId < bestPeer) {
 		// join best peer
-		event := &Event{From: state.NodeId, To: bestPeer, Payload: &JoinEvent{SatId: state.NodeId, ClusterId: bestPeer}}
-		eventPrev := &Event{From: state.NodeId, To: state.NodeId - 1, Payload: &ClusterHeadEvent{ClusterId: bestPeer}}
-		eventNext := &Event{From: state.NodeId, To: state.NodeId + 1, Payload: &ClusterHeadEvent{ClusterId: bestPeer}}
+		events := []*Event{{From: state.NodeId, To: bestPeer, Payload: &JoinEvent{SatId: state.NodeId, ClusterId: bestPeer}}, {From: state.NodeId, To: state.NodeId - 1, Payload: &ClusterHeadEvent{ClusterId: bestPeer, ClusterheadId: state.NodeId}}, {From: state.NodeId, To: state.NodeId + 1, Payload: &ClusterHeadEvent{ClusterId: bestPeer, ClusterheadId: state.NodeId}}}
 
+		for _, member := range state.ClusterMembers {
+			events = append(events, &Event{
+				From:    state.NodeId,
+				To:      member,
+				Payload: &ClusterHeadEvent{ClusterId: bestPeer, ClusterheadId: state.NodeId},
+			})
+		}
 		state.ClusterId = bestPeer
+		state.ChId = bestPeer
 		state.Phase = ClusterMember
-		return []*Event{event, eventPrev, eventNext}
+		return events
 	}
 	return nil
 }
 func handleCMPhase(state *LocalState) []*Event {
 	// if the cluster id is not in the available nodes, return to plane cluster. Current node is always
 	// a plane cluster head. Plane cluster members are always in contact with plane cluster head.
-	if !slices.Contains(state.AvailableNodes, state.ClusterId) {
+	if !slices.Contains(state.AvailableNodes, state.ChId) {
 		state.Phase = Election
 		state.ClusterId = state.NodeId
+		state.ChId = state.NodeId
+		fmt.Printf("[%d] return to election state\n", state.NodeId)
 	}
 	return nil
 }
@@ -102,6 +112,8 @@ func handleElectionPhase(state *LocalState) []*Event {
 		nextNodeMsg := &Event{From: state.NodeId, To: state.NodeId + 1, Payload: payload}
 		return []*Event{prevNodeMsg, nextNodeMsg}
 	}
+
+	state.Phase = ClusterMember
 
 	// cluster member on same plane
 	return nil
@@ -126,6 +138,9 @@ func (lc *LayeredClustering) OnEvent(state *LocalState, event *Event) []*Event {
 }
 
 func handleJoinEvent(state *LocalState, payload *JoinEvent) []*Event {
+	if !slices.Contains(state.ClusterMembers, payload.SatId) {
+		state.ClusterMembers = append(state.ClusterMembers, payload.SatId)
+	}
 	switch state.Phase {
 	case ClusterHead:
 	case ClusterMember:
@@ -142,8 +157,42 @@ func handleLeaveEvent(state *LocalState, payload *LeaveEvent) []*Event {
 }
 func handleClusterHeadEvent(state *LocalState, payload *ClusterHeadEvent) []*Event {
 	state.ClusterId = payload.ClusterId
+	state.ChId = payload.ClusterheadId
 	state.Term++
 	state.Phase = ClusterMember
+	if isPlaneCH(state.NodeId) {
+		// propagate message to members
+		events := make([]*Event, 0, len(state.ClusterMembers)+2)
+		events = append(events, &Event{
+			From: state.NodeId,
+			To:   state.NodeId - 1,
+			Payload: &ClusterHeadEvent{
+				ClusterId:     payload.ClusterId,
+				ClusterheadId: state.NodeId,
+			},
+		}, &Event{
+			From: state.NodeId,
+			To:   state.NodeId + 1,
+			Payload: &ClusterHeadEvent{
+				ClusterId:     payload.ClusterId,
+				ClusterheadId: state.NodeId,
+			},
+		})
+		for _, clusterMember := range state.ClusterMembers {
+			if clusterMember == payload.ClusterheadId {
+				continue
+			}
+			events = append(events, &Event{
+				From: state.NodeId,
+				To:   clusterMember,
+				Payload: &ClusterHeadEvent{
+					ClusterId:     payload.ClusterId,
+					ClusterheadId: state.NodeId,
+				},
+			})
+		}
+		return events
+	}
 	return nil
 
 }
@@ -169,4 +218,7 @@ func calculatePlaneCentrality(planeId int) float64 {
 }
 func isPlaneCH(peerId int) bool {
 	return peerId%3 == 2
+}
+func isSamePlane(id, peerId int) bool {
+	return peerId/21 == id/21
 }

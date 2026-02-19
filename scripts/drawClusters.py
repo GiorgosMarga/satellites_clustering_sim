@@ -51,8 +51,10 @@ with open(connections_file, "r") as f:
             a, b = line.split("->")
             a, b = a.strip(), b.strip()
             if plane_min <= int(a) <= plane_max and plane_min <= int(b) <= plane_max:
-                clusters.setdefault(a, []).append(b)
-                clusters.setdefault(b, []).append(a)
+                # clusters.setdefault(a, []).append(b)
+                if b not in clusters:
+                    clusters[b] = []
+                clusters[b].append(a)
                 node_ids.extend([a, b])
                 if a == b:
                     cluster_heads.add(a)
@@ -114,16 +116,14 @@ for idx, comp in enumerate(cluster_components):
         node_to_cluster[node] = idx
 
 node_colors = []
-for node in G.nodes():
-    if node in cluster_heads:
-        node_colors.append("black")
-    else:
-        cluster_id = node_to_cluster.get(node, -1)
-        if cluster_id == -1:
-            node_colors.append("lightgray")
-        else:
-            node_colors.append(COLORS[cluster_id % len(COLORS)])
+for node in G.nodes:
+  for clusterId in clusters:
+    for id in set(clusters[clusterId]):
+      if id == node:
+        node_colors.append(COLORS[int(clusterId) % len(COLORS)])
+        
 
+print(clusters)
 # --- PLOT ---
 plt.figure(figsize=(plot_width, plot_height))
 

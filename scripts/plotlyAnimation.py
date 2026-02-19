@@ -8,7 +8,7 @@ SNAPSHOT_DIR = "./snapshots"
 NUM_FRAMES = 10         # how many snapshot files
 SATS_PER_PLANE = 21
 PLANE_START = 1
-PLANE_END = 75
+PLANE_END = 10
 EARTH_RADIUS = 6371      # optional scale
 OUTPUT_FILE = "orbit_animation.html"
 
@@ -64,7 +64,7 @@ def load_snapshot(frame_id):
     positions = {}
 
     path = os.path.join(SNAPSHOT_DIR, f"{frame_id:03d}")
-    print(path)
+    print("Loading:",path)
     if not os.path.exists(path):
         return positions
 
@@ -131,7 +131,18 @@ for frame_id in range(NUM_FRAMES):
                 marker_colors.append(
                     colors[cluster_id % len(colors)]
                 )
+    clusters = {}
+    for node  in node_to_cluster:
+        ch = node_to_cluster[node]
+        if ch not in clusters:
+            clusters[ch] = []
+        clusters[ch].append(node)
 
+    for cluster in clusters:
+        if cluster == 0: continue
+        if str(cluster) not in clusters[cluster]:
+            # total += 1
+            print(f"Clusterhead {cluster} doesnt include it self, {node_to_cluster.get(cluster,-1)}")
     frames.append(
         go.Frame(
             data=[go.Scatter3d(
@@ -193,18 +204,7 @@ fig.update_layout(
    
 # for cluster in node_to_cluster:
 #     print(cluster)
-clusters = {}
-for node  in node_to_cluster:
-    ch = node_to_cluster[node]
-    if ch not in clusters:
-        clusters[ch] = []
-    clusters[ch].append(node)
 
-for cluster in clusters:
-    if cluster == 0: continue
-    if str(cluster) not in clusters[cluster]:
-        # total += 1
-        print(f"Clusterhead {cluster} doesnt include it self, {node_to_cluster.get(cluster,-1)}")
 # ---------------- SAVE ----------------
 fig.write_html(OUTPUT_FILE)
 print(f"Saved animation to {OUTPUT_FILE}")

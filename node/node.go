@@ -21,15 +21,13 @@ type Node struct {
 	Neighbors map[int]*Node
 	Transport transport.Transport
 	Position
-	ctx    context.Context
-	cancel context.CancelFunc
+	doneCh chan struct{}
 	// For Clustering
 	State       *cluster.LocalState
 	clusterAlgo cluster.ClusterAlgo
 }
 
 func New(id int, pos []float64) *Node {
-	ctx, cancel := context.WithCancel(context.Background())
 	return &Node{
 		ID:        id,
 		Neighbors: make(map[int]*Node),
@@ -39,13 +37,17 @@ func New(id int, pos []float64) *Node {
 			Y: pos[1],
 			Z: pos[2],
 		},
-		ctx:         ctx,
-		cancel:      cancel,
 		State:       cluster.NewState(id, pos),
 		clusterAlgo: cluster.NewLayeredClustering(),
+		doneCh:      make(chan struct{}),
 	}
 }
-
+func (n *Node) Reset() {
+	n.Neighbors = make(map[int]*Node)
+	n.State.Reset()
+	n.doneCh = make(chan struct{})
+	n.Transport = transport.NewDefault()
+}
 func (n *Node) Update(newPos []float64) {
 	n.Position = Position{
 		X: newPos[0],
@@ -62,10 +64,11 @@ func (n *Node) AddPeer(p *Node) {
 }
 
 func (n *Node) Stop() {
-	n.cancel()
+	close(n.doneCh)
 }
 func (n *Node) Start() {
-	go n.Transport.Start(n.ctx)
+	ctx, cancel := context.WithCancel(context.Background())
+	go n.Transport.Start(ctx)
 	ticker := time.NewTicker(1 * time.Second)
 	for {
 		select {
@@ -76,7 +79,8 @@ func (n *Node) Start() {
 			}
 		case <-ticker.C:
 			n.handleTick()
-		case <-n.ctx.Done():
+		case <-n.doneCh:
+			cancel()
 			return
 		}
 	}
@@ -84,24 +88,25 @@ func (n *Node) Start() {
 func (n *Node) handleTick() {
 	outgoingEvents := n.clusterAlgo.OnTick(n.State)
 	for _, event := range outgoingEvents {
+
 		if err := n.Transport.Send(&transport.Message{
 			From:    n.ID,
 			To:      event.To,
 			Payload: event,
 		}); err != nil {
-			fmt.Println(err)
+			fmt.Printf("[%d]: %+v, %s", n.ID, event.Payload, err)
 		}
 	}
 }
-func (n *Node) handleEvent(event *cluster.Event) {
-	outgoingEvents := n.clusterAlgo.OnEvent(n.State, event)
+func (n *Node) handleEvent(incEvent *cluster.Event) {
+	outgoingEvents := n.clusterAlgo.OnEvent(n.State, incEvent)
 	for _, event := range outgoingEvents {
 		if err := n.Transport.Send(&transport.Message{
 			From:    n.ID,
 			To:      event.To,
 			Payload: event,
 		}); err != nil {
-			fmt.Println(err)
+			fmt.Printf("[%d]: %+v, %s", n.ID, event.Payload, err)
 		}
 	}
 }

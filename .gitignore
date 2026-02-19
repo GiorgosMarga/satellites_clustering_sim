@@ -1,4 +1,4 @@
 *.html
 *.txt
 *.png
-./engLogs
+engLogs/
